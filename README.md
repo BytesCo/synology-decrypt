@@ -39,7 +39,7 @@ This is a command line tool, and running it comes down to the following.
 
 * In the root folder of the cloned repository, run `python -m syndecrypt` followed by the supported command line arguments (leave out or add `-h` for usage information / help).
 
-*Note* that currently this tool does not traverse directories: You either mention all files explicitly on a single command line, either you run it repeatedly.
+The tool now supports directories (scanned recursively) and zip files as input. If no password file or private key is provided, the tool will prompt for a password interactively.
 
 # Feedback
 
@@ -120,12 +120,23 @@ The current code is still basic and does not provide enough explanation yet.  I'
 
 ## Command-line decryption tool
 
-* Decrypt directories recursively.
+* ~~Decrypt directories recursively.~~ *(done)*
 * Check password file: check single line, warning if not printable ASCII.
 * Make log level configurable (default: warning).
-* Add `--verify` option, to check decryptability and file structure.
+* ~~Add `--verify` option, to check decryptability and file structure.~~ *(done)*
 * Make `--verify` option also verify `@SynologyCloudSync/cloudsync_encrypt.info` files.
 
 ## Encryption
 
 * Add encryption option/algorithm.
+
+# Changelog
+
+## 2026-04-12
+
+* **Directory input**: When an input path is a directory, all files are now scanned recursively and decrypted into the output directory with their directory structure preserved.
+* **Zip file input**: When an input path is a zip file (e.g., downloaded from Google Drive), encrypted files inside the archive are decrypted directly from the zip stream. No temporary files are written to disk, ensuring previously-protected data is not left behind.
+* **`--verify` option**: New flag to check decryptability and file structure without actually writing decrypted output. Works with files, directories, and zip archives.
+* **Interactive password prompt**: When neither `-p` (password file) nor `-k` (private key) is provided, the tool now prompts for a password on the console using `getpass` (input is not echoed).
+* **Absolute path handling**: Input files specified with absolute paths now produce correct output paths relative to the output directory, instead of being treated as the root of the filesystem.
+* **Default output directory**: The `-O` / `--output-directory` option now defaults to `output` in the current working directory, so it no longer needs to be specified explicitly.
