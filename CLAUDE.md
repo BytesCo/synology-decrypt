@@ -23,9 +23,10 @@ uv run coverage run -m pytest
 
 # Run the CLI tool
 uv run python -m syndecrypt [-p <password-file> | -k <private.pem>] [-a] [--verify] \
-              [--larger-than=<size>] [--smaller-than=<size>] -O <output-dir> <encrypted-file>...
-#   -a / --archive                Preserve source mode/mtime/atime/uid/gid (rsync-style) on decrypted output
-#   --larger-than / --smaller-than Skip input files outside a size window (strict >/<); SIZE accepts K/M/G/T (binary)
+              [--skip-larger-than=<size>] [--skip-smaller-than=<size>] -O <output-dir> <encrypted-file>...
+#   -a / --archive                          Preserve source mode/mtime/atime/uid/gid (rsync-style) on decrypted output
+#   --skip-larger-than / --skip-smaller-than Exclude input files outside a size window (strict >/<);
+#                                           SIZE accepts K/M/G/T (binary). Comparison is against the encrypted on-disk size.
 ```
 
 ## Runtime Dependency

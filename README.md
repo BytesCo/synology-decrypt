@@ -55,14 +55,16 @@ For zip-file input, only `mode` (when the archive was produced on Unix) and `mti
 
 `--archive` is a no-op when combined with `--verify` (no output file is produced).
 
-## Filtering by size (`--larger-than` / `--smaller-than`)
+## Excluding files by size (`--skip-larger-than` / `--skip-smaller-than`)
 
-Two optional flags let you skip files that fall outside a size window — useful on low-RAM hardware (e.g., a Synology NAS) where you'd rather not pull multi-GB files through LZ4 decompression, or when you only want to process the small (or large) files in a batch.
+Two optional flags let you **exclude** files at the size extremes — useful on low-RAM hardware (e.g., a Synology NAS) where you'd rather not pull multi-GB files through LZ4 decompression, or when you only want to process files within a particular size band.
 
-* `--larger-than=SIZE` — skip any input file whose size is **strictly greater than** `SIZE`.
-* `--smaller-than=SIZE` — skip any input file whose size is **strictly less than** `SIZE`.
+These are **exclusion** filters: they drop files that match, they do not select them. Naming them `--skip-...` is intentional so the direction is unambiguous.
 
-Either may be used alone, or both together to define an inclusive range. The comparison is strict, so a file whose size exactly equals the threshold is **not** skipped.
+* `--skip-larger-than=SIZE` — exclude any input file whose size is **strictly greater than** `SIZE`. (Keep only files of size ≤ `SIZE`.)
+* `--skip-smaller-than=SIZE` — exclude any input file whose size is **strictly less than** `SIZE`. (Keep only files of size ≥ `SIZE`.)
+
+Either may be used alone, or both together to define a kept-range. The comparison is strict, so a file whose size exactly equals the threshold is **kept**, not excluded.
 
 `SIZE` accepts a plain byte count or a binary-prefix suffix (case-insensitive):
 
@@ -77,19 +79,20 @@ Either may be used alone, or both together to define an inclusive range. The com
 
 **Important:** the comparison is against the **encrypted (on-disk) size** — the `.csenc` file size, or the uncompressed entry size when reading from a zip. csenc files are LZ4-compressed, so the decrypted output is usually larger than what the filter sees. If you need to gate by decrypted size, decrypt without a filter and post-process.
 
-Size filters apply in `--verify` mode too — oversize files are skipped before any decompression work runs.
+These exclusions apply in `--verify` mode too — excluded files are dropped before any decompression work runs.
 
-Example:
-
-```
-# Skip anything bigger than 100 MB or smaller than 1 KB
-python -m syndecrypt -p password.txt --larger-than=100M --smaller-than=1K -O out/ encrypted/
-```
-
-The summary at the end of the run lists how many files were skipped due to size filters:
+Example — only process files between 1 KB and 100 MB inclusive:
 
 ```
-Decrypted 12 file(s): all succeeded. (4 skipped due to size filters.)
+python -m syndecrypt -p password.txt \
+    --skip-larger-than=100M --skip-smaller-than=1K \
+    -O out/ encrypted/
+```
+
+The summary at the end of the run lists how many files were excluded:
+
+```
+Decrypted 12 file(s): all succeeded. (4 excluded by --skip-larger-than/--skip-smaller-than.)
 ```
 
 # Feedback
@@ -186,7 +189,7 @@ The current code is still basic and does not provide enough explanation yet.  I'
 ## 2026-05-14
 
 * **`-a` / `--archive` option**: Optionally preserve source filesystem metadata (mode, mtime, atime, and uid/gid when permitted) on decrypted output, similar to `rsync -a`. See "Preserving metadata" above.
-* **`--larger-than` / `--smaller-than` options**: Optionally skip input files outside a size window, evaluated against the encrypted on-disk size before any decompression work. SIZE accepts K/M/G/T binary suffixes. The run summary now reports a "skipped" count alongside succeeded/failed. See "Filtering by size" above.
+* **`--skip-larger-than` / `--skip-smaller-than` options**: Optionally exclude input files outside a size window, evaluated against the encrypted on-disk size before any decompression work. The `skip-` prefix is intentional: these are exclusion filters, not selection filters. SIZE accepts K/M/G/T binary suffixes. The run summary now reports an excluded count alongside succeeded/failed. See "Excluding files by size" above.
 
 ## 2026-04-12
 

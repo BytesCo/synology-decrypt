@@ -5,7 +5,7 @@ synology-decrypt:
 
 Usage:
   syndecrypt [-p <password-file> | -k <private.pem>] [-a] [--verify]
-             [--larger-than=<size>] [--smaller-than=<size>]
+             [--skip-larger-than=<size>] [--skip-smaller-than=<size>]
              [-O <directory>] <input>...
   syndecrypt (-h | --help)
 
@@ -21,16 +21,20 @@ Options:
                            Changing uid/gid usually requires root; chown
                            failures are silently skipped. ctime cannot be set
                            on Linux and is not preserved. Ignored with --verify.
-  --larger-than=<size>     Skip any input file whose encrypted (on-disk) size
-                           is strictly greater than <size>. SIZE accepts a
+  --skip-larger-than=<size>
+                           Exclude any input file whose encrypted (on-disk)
+                           size is strictly greater than <size>; the file is
+                           not decrypted and not verified. SIZE accepts a
                            plain byte count or a suffix K/M/G/T (binary,
                            1K=1024), e.g. 1G, 500K, 1.5M. Note: csenc files
                            are LZ4-compressed, so the comparison is against
                            the encrypted size, not the decrypted size.
-  --smaller-than=<size>    Skip any input file whose encrypted (on-disk) size
-                           is strictly less than <size>. Same SIZE format as
-                           the larger-than flag. May be combined with the
-                           larger-than flag to define an inclusive range.
+  --skip-smaller-than=<size>
+                           Exclude any input file whose encrypted (on-disk)
+                           size is strictly less than <size>. Same SIZE
+                           format as the skip-larger-than flag. May be
+                           combined with skip-larger-than to define a range
+                           of sizes that are kept.
   --verify                 Check decryptability and file structure without
                            actually decrypting
   -h --help                Show this screen.
@@ -77,8 +81,8 @@ def main(argv=None):
                 except ValueError as e:
                         sys.exit('syndecrypt: invalid value for %s: %r (%s)' % (flag_name, value, e))
 
-        max_size = _parse_size_arg(arguments['--larger-than'], '--larger-than')
-        min_size = _parse_size_arg(arguments['--smaller-than'], '--smaller-than')
+        max_size = _parse_size_arg(arguments['--skip-larger-than'], '--skip-larger-than')
+        min_size = _parse_size_arg(arguments['--skip-smaller-than'], '--skip-smaller-than')
 
         def _filtered_by_size(size_bytes):
                 if max_size is not None and size_bytes > max_size:
@@ -113,7 +117,7 @@ def main(argv=None):
 
         def _track_size_skip(label, size_bytes):
                 nonlocal skipped
-                logging.info('skipping "%s" (size %d bytes, filtered)', label, size_bytes)
+                logging.info('excluding "%s" (size %d bytes, outside size filter)', label, size_bytes)
                 skipped += 1
 
         for input_path in arguments['<input>']:
@@ -207,7 +211,7 @@ def main(argv=None):
         else:
                 message = '%s %d file(s): %d succeeded, %d failed.' % (action, total, succeeded, failed)
         if skipped:
-                message += ' (%d skipped due to size filters.)' % skipped
+                message += ' (%d excluded by --skip-larger-than/--skip-smaller-than.)' % skipped
         print(message)
 
         return {'succeeded': succeeded, 'failed': failed, 'skipped': skipped}

@@ -881,7 +881,7 @@ class TestArchivePreservation:
 
 
 # ---------------------------------------------------------------------------
-# 8. --larger-than / --smaller-than: size filtering
+# 8. --skip-larger-than / --skip-smaller-than: size-based exclusion
 # ---------------------------------------------------------------------------
 
 class TestSizeFiltersParseSize:
@@ -962,7 +962,7 @@ class TestSizeFilters:
         pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
 
         result = main(argv=[
-            '--larger-than=1K', '-p', pwd_file,
+            '--skip-larger-than=1K', '-p', pwd_file,
             '-O', str(output_dir), str(src_dir),
         ])
 
@@ -983,7 +983,7 @@ class TestSizeFilters:
         # Threshold = 1K. small.csenc is < 1K, big.bin is > 1K.
         # small.csenc is skipped; big.bin is processed but fails decryption.
         result = main(argv=[
-            '--smaller-than=1K', '-p', pwd_file,
+            '--skip-smaller-than=1K', '-p', pwd_file,
             '-O', str(output_dir), str(src_dir),
         ])
 
@@ -1009,7 +1009,7 @@ class TestSizeFilters:
         pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
 
         result = main(argv=[
-            '--larger-than=5000', '--smaller-than=200',
+            '--skip-larger-than=5000', '--skip-smaller-than=200',
             '-p', pwd_file, '-O', str(output_dir), str(src_dir),
         ])
 
@@ -1029,8 +1029,8 @@ class TestSizeFilters:
         pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
 
         result = main(argv=[
-            '--larger-than=' + str(size_exact),
-            '--smaller-than=' + str(size_exact),
+            '--skip-larger-than=' + str(size_exact),
+            '--skip-smaller-than=' + str(size_exact),
             '-p', pwd_file, '-O', str(output_dir), str(src_dir),
         ])
 
@@ -1060,7 +1060,7 @@ class TestSizeFilters:
         pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
 
         result = main(argv=[
-            '--larger-than=1K', '-p', pwd_file,
+            '--skip-larger-than=1K', '-p', pwd_file,
             '-O', str(output_dir), str(zip_path),
         ])
 
@@ -1079,7 +1079,7 @@ class TestSizeFilters:
         pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
 
         result = main(argv=[
-            '--verify', '--larger-than=1K', '-p', pwd_file, str(src_dir),
+            '--verify', '--skip-larger-than=1K', '-p', pwd_file, str(src_dir),
         ])
         captured = capsys.readouterr()
 
@@ -1087,7 +1087,7 @@ class TestSizeFilters:
         assert result['failed'] == 0
         assert result['skipped'] == 1
         assert 'Verified' in captured.out
-        assert 'skipped' in captured.out
+        assert 'excluded by --skip-larger-than' in captured.out
 
     def test_summary_includes_skipped_count(self, tmp_path, capsys):
         from syndecrypt.__main__ import main
@@ -1100,11 +1100,11 @@ class TestSizeFilters:
         pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
 
         main(argv=[
-            '--larger-than=1K', '-p', pwd_file,
+            '--skip-larger-than=1K', '-p', pwd_file,
             '-O', str(output_dir), str(src_dir),
         ])
         captured = capsys.readouterr()
-        assert '1 skipped due to size filters' in captured.out
+        assert '1 excluded by --skip-larger-than/--skip-smaller-than' in captured.out
 
     def test_invalid_size_arg_exits_with_message(self, tmp_path):
         """A malformed SIZE should cause a clean sys.exit, not a mid-run crash."""
@@ -1114,10 +1114,10 @@ class TestSizeFilters:
         pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
 
         with pytest.raises(SystemExit) as exc_info:
-            main(argv=['--larger-than=banana', '-p', pwd_file,
+            main(argv=['--skip-larger-than=banana', '-p', pwd_file,
                        '-O', str(tmp_path / 'out'), abs_input])
         msg = str(exc_info.value)
-        assert '--larger-than' in msg
+        assert '--skip-larger-than' in msg
         assert 'banana' in msg
 
     def test_single_file_input_honors_size_filter(self, tmp_path):
@@ -1130,7 +1130,7 @@ class TestSizeFilters:
         pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
 
         result = main(argv=[
-            '--larger-than=1K', '-p', pwd_file,
+            '--skip-larger-than=1K', '-p', pwd_file,
             '-O', str(output_dir), str(oversize),
         ])
         assert result == {'succeeded': 0, 'failed': 0, 'skipped': 1}
