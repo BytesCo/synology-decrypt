@@ -2,6 +2,7 @@ from __future__ import print_function
 import io
 import os
 import sys
+import time
 import logging
 
 import syndecrypt.core as core
@@ -87,3 +88,48 @@ def safe_output_path(output_dir, file_path):
                 # Strip leading separator(s) so os.path.join works correctly
                 file_path = os.path.relpath(file_path, os.sep)
         return os.path.join(output_dir, file_path)
+
+
+def apply_metadata_from_stat(src_stat, target_path):
+        """Apply mode/mtime/atime/uid/gid from a stat result onto target_path.
+
+        Never raises: metadata failures must not turn a successful decryption into a
+        counted failure. ctime is intentionally not copied — it is not settable on
+        Linux (the kernel updates it implicitly on any inode change). The caller is
+        responsible for snapshotting the source stat *before* opening the source for
+        read, so the original atime is captured rather than the post-read atime.
+        """
+        try:
+                os.utime(target_path, ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns))
+        except OSError as e:
+                LOGGER.warning('cannot set times on "%s": %s', target_path, e)
+        try:
+                os.chmod(target_path, src_stat.st_mode & 0o7777)
+        except OSError as e:
+                LOGGER.warning('cannot chmod "%s": %s', target_path, e)
+        try:
+                os.chown(target_path, src_stat.st_uid, src_stat.st_gid)
+        except PermissionError:
+                LOGGER.debug('skipping chown of "%s": not permitted', target_path)
+        except OSError as e:
+                LOGGER.warning('chown of "%s" failed: %s', target_path, e)
+
+
+def apply_metadata_from_zipinfo(zinfo, target_path):
+        """Copy mode (if Unix) and mtime (from zip date_time) onto target_path.
+
+        Never raises. Standard ZipInfo does not carry uid/gid or atime, so only mode
+        and mtime are applied.
+        """
+        if zinfo.create_system == 3:
+                mode = (zinfo.external_attr >> 16) & 0o7777
+                if mode:
+                        try:
+                                os.chmod(target_path, mode)
+                        except OSError as e:
+                                LOGGER.warning('cannot chmod "%s": %s', target_path, e)
+        try:
+                ts = time.mktime(zinfo.date_time + (0, 0, -1))
+                os.utime(target_path, (ts, ts))
+        except (OSError, ValueError, OverflowError) as e:
+                LOGGER.warning('cannot set mtime on "%s": %s', target_path, e)

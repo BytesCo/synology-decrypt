@@ -4,7 +4,7 @@ synology-decrypt:
  Synology's Cloud Sync encryption algorithm
 
 Usage:
-  syndecrypt [-p <password-file> | -k <private.pem>] [--verify] [-O <directory>] <input>...
+  syndecrypt [-p <password-file> | -k <private.pem>] [-a] [--verify] [-O <directory>] <input>...
   syndecrypt (-h | --help)
 
 Options:
@@ -14,6 +14,11 @@ Options:
                            The file containing the decryption password
   -k <private.pem> --key-file=<private.pem>
                            The file containing the decryption private key
+  -a --archive             Preserve source metadata on decrypted output:
+                           mode, mtime, atime, and (when permitted) uid/gid.
+                           Changing uid/gid usually requires root; chown
+                           failures are silently skipped. ctime cannot be set
+                           on Linux and is not preserved. Ignored with --verify.
   --verify                 Check decryptability and file structure without
                            actually decrypting
   -h --help                Show this screen.
@@ -49,6 +54,7 @@ def main(argv=None):
 
         output_dir = arguments['--output-directory']
         verify_mode = arguments['--verify']
+        archive_mode = arguments['--archive']
 
         logging.getLogger().setLevel(logging.INFO)
         logging.basicConfig(format='%(levelname)s: %(message)s')
@@ -68,8 +74,10 @@ def main(argv=None):
                 try:
                         func(*args, **kwargs)
                         succeeded += 1
+                        return True
                 except Exception:
                         failed += 1
+                        return False
 
         for input_path in arguments['<input>']:
                 if os.path.isdir(input_path):
@@ -82,7 +90,16 @@ def main(argv=None):
                                         if verify_mode:
                                                 _track_verify(files.verify_file(full_path, password=password, private_key=private_key))
                                         else:
-                                                _track_decrypt(files.decrypt_file, full_path, out_path, password=password, private_key=private_key)
+                                                src_stat = None
+                                                if archive_mode:
+                                                        try:
+                                                                src_stat = os.stat(full_path)
+                                                        except OSError:
+                                                                src_stat = None
+                                                pre_existed = os.path.exists(out_path)
+                                                ok = _track_decrypt(files.decrypt_file, full_path, out_path, password=password, private_key=private_key)
+                                                if ok and src_stat is not None and not pre_existed and os.path.exists(out_path):
+                                                        files.apply_metadata_from_stat(src_stat, out_path)
 
                 elif zipfile.is_zipfile(input_path):
                         # Handle zip file: decrypt contents without temp files
@@ -101,8 +118,11 @@ def main(argv=None):
                                                                 logging.error('FAILED: zip entry "%s"', name)
                                                         _track_verify(result)
                                         else:
+                                                pre_existed = os.path.exists(out_path)
                                                 with zf.open(name) as entry_stream:
-                                                        _track_decrypt(files.decrypt_stream_to_file, entry_stream, out_path, password=password, private_key=private_key)
+                                                        ok = _track_decrypt(files.decrypt_stream_to_file, entry_stream, out_path, password=password, private_key=private_key)
+                                                if ok and archive_mode and not pre_existed and os.path.exists(out_path):
+                                                        files.apply_metadata_from_zipinfo(zf.getinfo(name), out_path)
 
                 else:
                         # Single file
@@ -110,7 +130,16 @@ def main(argv=None):
                         if verify_mode:
                                 _track_verify(files.verify_file(input_path, password=password, private_key=private_key))
                         else:
-                                _track_decrypt(files.decrypt_file, input_path, out_path, password=password, private_key=private_key)
+                                src_stat = None
+                                if archive_mode:
+                                        try:
+                                                src_stat = os.stat(input_path)
+                                        except OSError:
+                                                src_stat = None
+                                pre_existed = os.path.exists(out_path)
+                                ok = _track_decrypt(files.decrypt_file, input_path, out_path, password=password, private_key=private_key)
+                                if ok and src_stat is not None and not pre_existed and os.path.exists(out_path):
+                                        files.apply_metadata_from_stat(src_stat, out_path)
 
         # Print summary
         total = succeeded + failed

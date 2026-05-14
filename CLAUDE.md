@@ -22,7 +22,8 @@ uv run pytest tests/test_decrypt.py::test_decrypt_single_line_stream_with_passwo
 uv run coverage run -m pytest
 
 # Run the CLI tool
-uv run python -m syndecrypt (-p <password-file> | -k <private.pem>) -O <output-dir> <encrypted-file>...
+uv run python -m syndecrypt [-p <password-file> | -k <private.pem>] [-a] [--verify] -O <output-dir> <encrypted-file>...
+#   -a / --archive   Preserve source mode/mtime/atime/uid/gid (rsync-style) on decrypted output
 ```
 
 ## Runtime Dependency
@@ -34,7 +35,7 @@ The `lz4` command-line binary must be on `PATH` (Ubuntu: `apt install liblz4-too
 The package is `syndecrypt/` with three modules:
 
 - **`core.py`** — The decryption algorithm. Parses the `.csenc` binary format (`__CLOUDSYNC_ENC__` magic + custom TLV objects), derives AES-256-CBC keys via an OpenSSL-compatible KDF (`_openssl_kdf`), decrypts session keys with password (AES) or private key (RSA-OAEP), then decrypts data chunks with PKCS7 padding removal. Supports format versions 1.0, 3.0, and 3.1. Version 3+ uses a salt (1000 hash iterations) while v1 uses no salt (1 iteration).
-- **`files.py`** — File-level wrapper: reads encrypted file, writes decrypted output, handles directory creation and cleanup on failure.
+- **`files.py`** — File-level wrapper: reads encrypted file, writes decrypted output, handles directory creation and cleanup on failure. Also exposes `apply_metadata_from_stat` and `apply_metadata_from_zipinfo` helpers used by `--archive` mode; both are non-raising by contract so that metadata failures never turn a successful decrypt into a counted failure.
 - **`util.py`** — `switch` pattern-matching helper, `FilterSubprocess` for piping data through external commands, and `Lz4Decompressor` which wraps the `lz4 -d` CLI.
 
 ## Key Design Details

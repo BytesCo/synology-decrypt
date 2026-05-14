@@ -5,6 +5,7 @@ import hashlib
 import io
 import os
 import shutil
+import time
 import zipfile
 
 import pytest
@@ -676,3 +677,204 @@ class TestSummaryOutput:
         captured = capsys.readouterr()
         assert 'Verified 2 file(s): 1 succeeded, 1 failed.' in captured.out
         assert result == {'succeeded': 1, 'failed': 1}
+
+
+# ---------------------------------------------------------------------------
+# 7. --archive / -a: rsync-style metadata preservation
+# ---------------------------------------------------------------------------
+
+class TestArchivePreservation:
+
+    # Fixed reference time well in the past so it cannot collide with "now".
+    REF_MTIME_NS = 1_262_400_000_000_000_000  # 2010-01-02 12:00:00 UTC in ns
+    REF_ATIME_NS = 1_262_400_500_000_000_000  # 0.5s later
+
+    def _stage_source(self, tmp_path, mode=0o640):
+        """Copy a v1 csenc fixture into tmp_path with known mode/mtime/atime."""
+        src = tmp_path / 'src.csenc'
+        shutil.copy(CSENC_V1, str(src))
+        os.chmod(str(src), mode)
+        os.utime(str(src), ns=(self.REF_ATIME_NS, self.REF_MTIME_NS))
+        return src
+
+    def test_archive_preserves_mtime_for_file_input(self, tmp_path):
+        src = self._stage_source(tmp_path)
+        src_stat = os.stat(str(src))
+        out_path = str(tmp_path / 'out' / 'src.csenc')
+        files.decrypt_file(str(src), out_path, password=PASSWORD)
+        files.apply_metadata_from_stat(src_stat, out_path)
+        assert os.stat(out_path).st_mtime_ns == self.REF_MTIME_NS
+
+    def test_archive_preserves_atime_for_file_input(self, tmp_path):
+        src = self._stage_source(tmp_path)
+        src_stat = os.stat(str(src))
+        out_path = str(tmp_path / 'out' / 'src.csenc')
+        files.decrypt_file(str(src), out_path, password=PASSWORD)
+        files.apply_metadata_from_stat(src_stat, out_path)
+        assert os.stat(out_path).st_atime_ns == self.REF_ATIME_NS
+
+    def test_archive_preserves_mode_for_file_input(self, tmp_path):
+        src = self._stage_source(tmp_path, mode=0o640)
+        src_stat = os.stat(str(src))
+        out_path = str(tmp_path / 'out' / 'src.csenc')
+        files.decrypt_file(str(src), out_path, password=PASSWORD)
+        files.apply_metadata_from_stat(src_stat, out_path)
+        assert (os.stat(out_path).st_mode & 0o7777) == 0o640
+
+    def test_archive_preserves_uid_gid_when_same_user(self, tmp_path):
+        """When running as the same user, uid/gid are trivially preserved."""
+        src = self._stage_source(tmp_path)
+        src_stat = os.stat(str(src))
+        out_path = str(tmp_path / 'out' / 'src.csenc')
+        files.decrypt_file(str(src), out_path, password=PASSWORD)
+        files.apply_metadata_from_stat(src_stat, out_path)
+        out_st = os.stat(out_path)
+        assert out_st.st_uid == src_stat.st_uid
+        assert out_st.st_gid == src_stat.st_gid
+
+    def test_archive_chown_failure_is_non_fatal(self, tmp_path, monkeypatch):
+        """A PermissionError from chown must not raise; other metadata still applied."""
+        src = self._stage_source(tmp_path)
+        src_stat = os.stat(str(src))
+        out_path = str(tmp_path / 'out' / 'src.csenc')
+        files.decrypt_file(str(src), out_path, password=PASSWORD)
+
+        def fake_chown(path, uid, gid):
+            raise PermissionError('simulated lack of CAP_CHOWN')
+        monkeypatch.setattr(os, 'chown', fake_chown)
+
+        # Must not raise.
+        files.apply_metadata_from_stat(src_stat, out_path)
+
+        # mtime should still have been applied.
+        assert os.stat(out_path).st_mtime_ns == self.REF_MTIME_NS
+        assert os.path.exists(out_path)
+
+    def test_archive_preserves_metadata_directory_input(self, tmp_path):
+        """Full main() integration: --archive preserves mtime across a tree."""
+        from syndecrypt.__main__ import main
+
+        input_dir = tmp_path / 'enc'
+        sub_dir = input_dir / 'sub'
+        sub_dir.mkdir(parents=True)
+        a = input_dir / 'a.txt'
+        b = sub_dir / 'b.txt'
+        shutil.copy(CSENC_V1, str(a))
+        shutil.copy(CSENC_V3, str(b))
+        os.utime(str(a), ns=(self.REF_ATIME_NS, self.REF_MTIME_NS))
+        os.utime(str(b), ns=(self.REF_ATIME_NS, self.REF_MTIME_NS))
+        os.chmod(str(a), 0o604)
+
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        result = main(argv=['-a', '-p', pwd_file, '-O', str(output_dir), str(input_dir)])
+
+        assert result == {'succeeded': 2, 'failed': 0}
+        out_a = output_dir / 'enc' / 'a.txt'
+        out_b = output_dir / 'enc' / 'sub' / 'b.txt'
+        assert out_a.exists() and out_b.exists()
+        assert os.stat(out_a).st_mtime_ns == self.REF_MTIME_NS
+        assert os.stat(out_b).st_mtime_ns == self.REF_MTIME_NS
+        assert (os.stat(out_a).st_mode & 0o7777) == 0o604
+
+    def test_archive_preserves_mtime_for_zip_input(self, tmp_path):
+        """Zip entry mtime (2-second precision) is applied via main()."""
+        from syndecrypt.__main__ import main
+
+        zip_path = tmp_path / 'archive.zip'
+        zinfo = zipfile.ZipInfo(filename='entry.txt', date_time=(2010, 1, 2, 12, 0, 0))
+        with zipfile.ZipFile(str(zip_path), 'w') as zf:
+            with open(CSENC_V1, 'rb') as f:
+                zf.writestr(zinfo, f.read())
+
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        result = main(argv=['-a', '-p', pwd_file, '-O', str(output_dir), str(zip_path)])
+        assert result == {'succeeded': 1, 'failed': 0}
+
+        out_path = output_dir / 'entry.txt'
+        assert out_path.exists()
+        expected_ts = time.mktime((2010, 1, 2, 12, 0, 0, 0, 0, -1))
+        # Zip stores 2-second granularity; allow that.
+        assert abs(os.stat(out_path).st_mtime - expected_ts) <= 2
+
+    def test_archive_preserves_mode_for_zip_input(self, tmp_path):
+        """Unix mode bits from external_attr should be applied for zip input."""
+        zinfo = zipfile.ZipInfo(filename='entry.txt', date_time=(2015, 6, 15, 9, 30, 0))
+        zinfo.create_system = 3  # Unix
+        zinfo.external_attr = (0o604 & 0o7777) << 16
+
+        zip_path = tmp_path / 'archive.zip'
+        with zipfile.ZipFile(str(zip_path), 'w') as zf:
+            with open(CSENC_V1, 'rb') as f:
+                zf.writestr(zinfo, f.read())
+
+        out_path = str(tmp_path / 'out.txt')
+        with zipfile.ZipFile(str(zip_path), 'r') as zf:
+            with zf.open('entry.txt') as entry_stream:
+                files.decrypt_stream_to_file(entry_stream, out_path, password=PASSWORD)
+            files.apply_metadata_from_zipinfo(zf.getinfo('entry.txt'), out_path)
+
+        assert (os.stat(out_path).st_mode & 0o7777) == 0o604
+
+    def test_no_archive_does_not_copy_metadata(self, tmp_path):
+        """Without --archive, source mtime should NOT be transferred to output."""
+        from syndecrypt.__main__ import main
+
+        src_dir = tmp_path / 'enc'
+        src_dir.mkdir()
+        src = src_dir / 'a.txt'
+        shutil.copy(CSENC_V1, str(src))
+        os.utime(str(src), ns=(self.REF_ATIME_NS, self.REF_MTIME_NS))
+
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        # Note: no -a flag.
+        main(argv=['-p', pwd_file, '-O', str(output_dir), str(src_dir)])
+
+        out_path = output_dir / 'enc' / 'a.txt'
+        assert out_path.exists()
+        # Output mtime should be "now-ish" (within 1 day of now), nowhere near 2010.
+        out_mtime = os.stat(out_path).st_mtime
+        assert out_mtime > time.time() - 86400
+
+    def test_archive_with_verify_is_noop(self, tmp_path, capsys):
+        """--archive combined with --verify must produce no output files."""
+        from syndecrypt.__main__ import main
+
+        abs_input = _abs_test_path(CSENC_V1)
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        result = main(argv=['-a', '-p', pwd_file, '--verify', abs_input])
+        assert result == {'succeeded': 1, 'failed': 0}
+        captured = capsys.readouterr()
+        assert 'Verified 1 file(s): all succeeded.' in captured.out
+
+    def test_archive_skips_when_output_pre_exists(self, tmp_path):
+        """A pre-existing output file must not have its metadata overwritten."""
+        from syndecrypt.__main__ import main
+
+        src_dir = tmp_path / 'enc'
+        src_dir.mkdir()
+        src = src_dir / 'a.txt'
+        shutil.copy(CSENC_V1, str(src))
+        os.utime(str(src), ns=(self.REF_ATIME_NS, self.REF_MTIME_NS))
+
+        output_dir = tmp_path / 'out'
+        pre_existing = output_dir / 'enc' / 'a.txt'
+        pre_existing.parent.mkdir(parents=True)
+        pre_existing.write_bytes(b'do not touch')
+        # Stamp a completely different, recognizable mtime on the pre-existing file.
+        sentinel_mtime_ns = 1_500_000_000_000_000_000
+        os.utime(str(pre_existing), ns=(sentinel_mtime_ns, sentinel_mtime_ns))
+
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        main(argv=['-a', '-p', pwd_file, '-O', str(output_dir), str(src_dir)])
+
+        # File untouched: same content AND same mtime.
+        assert pre_existing.read_bytes() == b'do not touch'
+        assert os.stat(pre_existing).st_mtime_ns == sentinel_mtime_ns

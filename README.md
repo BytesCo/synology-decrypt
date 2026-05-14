@@ -41,6 +41,20 @@ This is a command line tool, and running it comes down to the following.
 
 The tool now supports directories (scanned recursively) and zip files as input. If no password file or private key is provided, the tool will prompt for a password interactively.
 
+## Preserving metadata (`-a` / `--archive`)
+
+Pass `-a` (or `--archive`) to copy filesystem metadata from each source onto the decrypted output, similar to `rsync -a`. The following are preserved:
+
+* file mode bits (`chmod`)
+* modification time (`mtime`) and access time (`atime`), with nanosecond precision for file/directory inputs (second precision for entries inside a zip)
+* owner and group (`uid` / `gid`), if the running user is permitted to change them — typically only `root` or a process with `CAP_CHOWN`. When not permitted, ownership is silently left as the running user, the same way `rsync` handles it.
+
+For zip-file input, only `mode` (when the archive was produced on Unix) and `mtime` are present in standard zip metadata; `atime`, `uid`, and `gid` are not preserved.
+
+`ctime` (inode change time) **cannot** be preserved: it is not settable by any Linux syscall and is updated by the kernel whenever an inode is modified. This matches the behavior of `rsync` and other archival tools.
+
+`--archive` is a no-op when combined with `--verify` (no output file is produced).
+
 # Feedback
 
 Feel very free to create a GitHub issue, create a pull request, or drop me a
@@ -131,6 +145,10 @@ The current code is still basic and does not provide enough explanation yet.  I'
 * Add encryption option/algorithm.
 
 # Changelog
+
+## 2026-05-14
+
+* **`-a` / `--archive` option**: Optionally preserve source filesystem metadata (mode, mtime, atime, and uid/gid when permitted) on decrypted output, similar to `rsync -a`. See "Preserving metadata" above.
 
 ## 2026-04-12
 
