@@ -4,7 +4,9 @@ synology-decrypt:
  Synology's Cloud Sync encryption algorithm
 
 Usage:
-  syndecrypt [-p <password-file> | -k <private.pem>] [-a] [--verify] [-O <directory>] <input>...
+  syndecrypt [-p <password-file> | -k <private.pem>] [-a] [--verify]
+             [--larger-than=<size>] [--smaller-than=<size>]
+             [-O <directory>] <input>...
   syndecrypt (-h | --help)
 
 Options:
@@ -19,6 +21,16 @@ Options:
                            Changing uid/gid usually requires root; chown
                            failures are silently skipped. ctime cannot be set
                            on Linux and is not preserved. Ignored with --verify.
+  --larger-than=<size>     Skip any input file whose encrypted (on-disk) size
+                           is strictly greater than <size>. SIZE accepts a
+                           plain byte count or a suffix K/M/G/T (binary,
+                           1K=1024), e.g. 1G, 500K, 1.5M. Note: csenc files
+                           are LZ4-compressed, so the comparison is against
+                           the encrypted size, not the decrypted size.
+  --smaller-than=<size>    Skip any input file whose encrypted (on-disk) size
+                           is strictly less than <size>. Same SIZE format as
+                           the larger-than flag. May be combined with the
+                           larger-than flag to define an inclusive range.
   --verify                 Check decryptability and file structure without
                            actually decrypting
   -h --help                Show this screen.
@@ -28,6 +40,7 @@ For more information, see https://github.com/marnix/synology-decrypt
 import docopt
 import getpass
 import os
+import sys
 import logging
 import zipfile
 
@@ -56,11 +69,30 @@ def main(argv=None):
         verify_mode = arguments['--verify']
         archive_mode = arguments['--archive']
 
+        def _parse_size_arg(value, flag_name):
+                if value is None:
+                        return None
+                try:
+                        return util.parse_size(value)
+                except ValueError as e:
+                        sys.exit('syndecrypt: invalid value for %s: %r (%s)' % (flag_name, value, e))
+
+        max_size = _parse_size_arg(arguments['--larger-than'], '--larger-than')
+        min_size = _parse_size_arg(arguments['--smaller-than'], '--smaller-than')
+
+        def _filtered_by_size(size_bytes):
+                if max_size is not None and size_bytes > max_size:
+                        return True
+                if min_size is not None and size_bytes < min_size:
+                        return True
+                return False
+
         logging.getLogger().setLevel(logging.INFO)
         logging.basicConfig(format='%(levelname)s: %(message)s')
 
         succeeded = 0
         failed = 0
+        skipped = 0
 
         def _track_verify(result):
                 nonlocal succeeded, failed
@@ -79,6 +111,11 @@ def main(argv=None):
                         failed += 1
                         return False
 
+        def _track_size_skip(label, size_bytes):
+                nonlocal skipped
+                logging.info('skipping "%s" (size %d bytes, filtered)', label, size_bytes)
+                skipped += 1
+
         for input_path in arguments['<input>']:
                 if os.path.isdir(input_path):
                         # Recursively scan directory
@@ -87,6 +124,13 @@ def main(argv=None):
                                         full_path = os.path.join(dirpath, filename)
                                         rel_path = os.path.relpath(full_path, os.path.dirname(input_path))
                                         out_path = files.safe_output_path(output_dir, rel_path)
+                                        try:
+                                                src_size = os.path.getsize(full_path)
+                                        except OSError:
+                                                src_size = None
+                                        if src_size is not None and _filtered_by_size(src_size):
+                                                _track_size_skip(full_path, src_size)
+                                                continue
                                         if verify_mode:
                                                 _track_verify(files.verify_file(full_path, password=password, private_key=private_key))
                                         else:
@@ -108,6 +152,13 @@ def main(argv=None):
                                         if name.endswith('/'):
                                                 continue  # skip directory entries
                                         out_path = files.safe_output_path(output_dir, name)
+                                        try:
+                                                src_size = zf.getinfo(name).file_size
+                                        except KeyError:
+                                                src_size = None
+                                        if src_size is not None and _filtered_by_size(src_size):
+                                                _track_size_skip('%s:%s' % (input_path, name), src_size)
+                                                continue
                                         if verify_mode:
                                                 logging.info('verifying zip entry "%s" from "%s"', name, input_path)
                                                 with zf.open(name) as entry_stream:
@@ -127,6 +178,13 @@ def main(argv=None):
                 else:
                         # Single file
                         out_path = files.safe_output_path(output_dir, os.path.basename(input_path))
+                        try:
+                                src_size = os.path.getsize(input_path)
+                        except OSError:
+                                src_size = None
+                        if src_size is not None and _filtered_by_size(src_size):
+                                _track_size_skip(input_path, src_size)
+                                continue
                         if verify_mode:
                                 _track_verify(files.verify_file(input_path, password=password, private_key=private_key))
                         else:
@@ -145,11 +203,14 @@ def main(argv=None):
         total = succeeded + failed
         action = 'Verified' if verify_mode else 'Decrypted'
         if failed == 0:
-                print('%s %d file(s): all succeeded.' % (action, total))
+                message = '%s %d file(s): all succeeded.' % (action, total)
         else:
-                print('%s %d file(s): %d succeeded, %d failed.' % (action, total, succeeded, failed))
+                message = '%s %d file(s): %d succeeded, %d failed.' % (action, total, succeeded, failed)
+        if skipped:
+                message += ' (%d skipped due to size filters.)' % skipped
+        print(message)
 
-        return {'succeeded': succeeded, 'failed': failed}
+        return {'succeeded': succeeded, 'failed': failed, 'skipped': skipped}
 
 
 if __name__ == '__main__':

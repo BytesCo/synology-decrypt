@@ -555,7 +555,7 @@ class TestSummaryOutput:
 
         captured = capsys.readouterr()
         assert 'Decrypted 1 file(s): all succeeded.' in captured.out
-        assert result == {'succeeded': 1, 'failed': 0}
+        assert result == {'succeeded': 1, 'failed': 0, 'skipped': 0}
 
     def test_summary_all_succeeded_directory(self, tmp_path, capsys):
         """Summary should count all files in a directory."""
@@ -574,7 +574,7 @@ class TestSummaryOutput:
 
         captured = capsys.readouterr()
         assert 'Decrypted 2 file(s): all succeeded.' in captured.out
-        assert result == {'succeeded': 2, 'failed': 0}
+        assert result == {'succeeded': 2, 'failed': 0, 'skipped': 0}
 
     def test_summary_all_succeeded_zip(self, tmp_path, capsys):
         """Summary should count all entries in a zip."""
@@ -592,7 +592,7 @@ class TestSummaryOutput:
 
         captured = capsys.readouterr()
         assert 'Decrypted 2 file(s): all succeeded.' in captured.out
-        assert result == {'succeeded': 2, 'failed': 0}
+        assert result == {'succeeded': 2, 'failed': 0, 'skipped': 0}
 
     def test_summary_with_failures_zip(self, tmp_path, capsys):
         """Summary should show failed count when some files fail."""
@@ -610,7 +610,7 @@ class TestSummaryOutput:
 
         captured = capsys.readouterr()
         assert 'Decrypted 2 file(s): 1 succeeded, 1 failed.' in captured.out
-        assert result == {'succeeded': 1, 'failed': 1}
+        assert result == {'succeeded': 1, 'failed': 1, 'skipped': 0}
 
     def test_summary_with_failures_directory(self, tmp_path, capsys):
         """Summary should show failed count for bad files in a directory."""
@@ -642,7 +642,7 @@ class TestSummaryOutput:
 
         captured = capsys.readouterr()
         assert 'Verified 1 file(s): all succeeded.' in captured.out
-        assert result == {'succeeded': 1, 'failed': 0}
+        assert result == {'succeeded': 1, 'failed': 0, 'skipped': 0}
 
     def test_summary_verify_mode_with_failure(self, tmp_path, capsys):
         """Summary should count failures in verify mode."""
@@ -659,7 +659,7 @@ class TestSummaryOutput:
 
         captured = capsys.readouterr()
         assert 'Verified 2 file(s): 1 succeeded, 1 failed.' in captured.out
-        assert result == {'succeeded': 1, 'failed': 1}
+        assert result == {'succeeded': 1, 'failed': 1, 'skipped': 0}
 
     def test_summary_verify_zip(self, tmp_path, capsys):
         """Summary should count zip entries in verify mode."""
@@ -676,7 +676,7 @@ class TestSummaryOutput:
 
         captured = capsys.readouterr()
         assert 'Verified 2 file(s): 1 succeeded, 1 failed.' in captured.out
-        assert result == {'succeeded': 1, 'failed': 1}
+        assert result == {'succeeded': 1, 'failed': 1, 'skipped': 0}
 
 
 # ---------------------------------------------------------------------------
@@ -770,7 +770,7 @@ class TestArchivePreservation:
 
         result = main(argv=['-a', '-p', pwd_file, '-O', str(output_dir), str(input_dir)])
 
-        assert result == {'succeeded': 2, 'failed': 0}
+        assert result == {'succeeded': 2, 'failed': 0, 'skipped': 0}
         out_a = output_dir / 'enc' / 'a.txt'
         out_b = output_dir / 'enc' / 'sub' / 'b.txt'
         assert out_a.exists() and out_b.exists()
@@ -792,7 +792,7 @@ class TestArchivePreservation:
         pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
 
         result = main(argv=['-a', '-p', pwd_file, '-O', str(output_dir), str(zip_path)])
-        assert result == {'succeeded': 1, 'failed': 0}
+        assert result == {'succeeded': 1, 'failed': 0, 'skipped': 0}
 
         out_path = output_dir / 'entry.txt'
         assert out_path.exists()
@@ -849,7 +849,7 @@ class TestArchivePreservation:
         pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
 
         result = main(argv=['-a', '-p', pwd_file, '--verify', abs_input])
-        assert result == {'succeeded': 1, 'failed': 0}
+        assert result == {'succeeded': 1, 'failed': 0, 'skipped': 0}
         captured = capsys.readouterr()
         assert 'Verified 1 file(s): all succeeded.' in captured.out
 
@@ -878,3 +878,260 @@ class TestArchivePreservation:
         # File untouched: same content AND same mtime.
         assert pre_existing.read_bytes() == b'do not touch'
         assert os.stat(pre_existing).st_mtime_ns == sentinel_mtime_ns
+
+
+# ---------------------------------------------------------------------------
+# 8. --larger-than / --smaller-than: size filtering
+# ---------------------------------------------------------------------------
+
+class TestSizeFiltersParseSize:
+
+    def test_parse_size_plain_bytes(self):
+        assert util.parse_size('0') == 0
+        assert util.parse_size('1024') == 1024
+        assert util.parse_size('1000000') == 1_000_000
+
+    def test_parse_size_suffix_K(self):
+        assert util.parse_size('1K') == 1024
+        assert util.parse_size('1k') == 1024
+        assert util.parse_size('500K') == 500 * 1024
+
+    def test_parse_size_suffix_M_G_T(self):
+        assert util.parse_size('1M') == 1024 ** 2
+        assert util.parse_size('1G') == 1024 ** 3
+        assert util.parse_size('1T') == 1024 ** 4
+
+    def test_parse_size_float(self):
+        assert util.parse_size('1.5K') == int(1.5 * 1024)
+        assert util.parse_size('0.5M') == 1024 * 512
+
+    def test_parse_size_strips_whitespace(self):
+        assert util.parse_size('  1K  ') == 1024
+
+    def test_parse_size_invalid_empty(self):
+        with pytest.raises(ValueError):
+            util.parse_size('')
+        with pytest.raises(ValueError):
+            util.parse_size(None)
+
+    def test_parse_size_invalid_text(self):
+        with pytest.raises(ValueError):
+            util.parse_size('banana')
+        with pytest.raises(ValueError):
+            util.parse_size('5x')
+
+    def test_parse_size_invalid_negative(self):
+        with pytest.raises(ValueError):
+            util.parse_size('-1K')
+
+
+class TestSizeFilters:
+    """End-to-end size-filter behavior via main().
+
+    The small CSENC_V1 fixture is 158 bytes on disk. The large 'big.bin'
+    fixtures here are zero-padded garbage; they pass the size filter but fail
+    to decrypt (counted as 'failed' when not filtered, 'skipped' when filtered).
+    Tests that need a definitely-decryptable file use CSENC_V1.
+    """
+
+    @staticmethod
+    def _stage_dir(tmp_path, contents):
+        """Stage files into tmp_path/'enc'/. contents = {name: bytes-or-source-path}."""
+        d = tmp_path / 'enc'
+        d.mkdir(parents=True)
+        for name, source in contents.items():
+            target = d / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(source, (bytes, bytearray)):
+                target.write_bytes(source)
+            else:
+                shutil.copy(source, str(target))
+        return d
+
+    def _csenc_size(self):
+        return os.path.getsize(CSENC_V1)
+
+    def test_larger_than_skips_oversize_file(self, tmp_path):
+        from syndecrypt.__main__ import main
+
+        src_dir = self._stage_dir(tmp_path, {
+            'small.csenc': CSENC_V1,
+            'big.bin': b'\x00' * 10_000,
+        })
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        result = main(argv=[
+            '--larger-than=1K', '-p', pwd_file,
+            '-O', str(output_dir), str(src_dir),
+        ])
+
+        assert result == {'succeeded': 1, 'failed': 0, 'skipped': 1}
+        assert (output_dir / 'enc' / 'small.csenc').exists()
+        assert not (output_dir / 'enc' / 'big.bin').exists()
+
+    def test_smaller_than_skips_undersize_file(self, tmp_path):
+        from syndecrypt.__main__ import main
+
+        src_dir = self._stage_dir(tmp_path, {
+            'small.csenc': CSENC_V1,
+            'big.bin': b'\x00' * 10_000,
+        })
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        # Threshold = 1K. small.csenc is < 1K, big.bin is > 1K.
+        # small.csenc is skipped; big.bin is processed but fails decryption.
+        result = main(argv=[
+            '--smaller-than=1K', '-p', pwd_file,
+            '-O', str(output_dir), str(src_dir),
+        ])
+
+        assert result['skipped'] == 1
+        assert result['failed'] == 1
+        assert result['succeeded'] == 0
+        assert not (output_dir / 'enc' / 'small.csenc').exists()
+
+    def test_both_filters_combined(self, tmp_path):
+        """Range [200, 5000] keeps only the file inside that window."""
+        from syndecrypt.__main__ import main
+
+        tiny = b'\x00' * 100
+        mid = b'\x00' * 1000
+        big = b'\x00' * 10_000
+
+        src_dir = self._stage_dir(tmp_path, {
+            'tiny.bin': tiny,
+            'mid.bin': mid,
+            'big.bin': big,
+        })
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        result = main(argv=[
+            '--larger-than=5000', '--smaller-than=200',
+            '-p', pwd_file, '-O', str(output_dir), str(src_dir),
+        ])
+
+        # Two skipped (tiny, big). One attempted (mid) — fails decryption.
+        assert result['skipped'] == 2
+        assert result['succeeded'] + result['failed'] == 1
+
+    def test_boundary_is_kept_strict_comparison(self, tmp_path):
+        """A file whose size exactly equals the threshold is NOT skipped."""
+        from syndecrypt.__main__ import main
+
+        csenc_bytes = open(CSENC_V1, 'rb').read()
+        size_exact = len(csenc_bytes)
+
+        src_dir = self._stage_dir(tmp_path, {'on_boundary.csenc': csenc_bytes})
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        result = main(argv=[
+            '--larger-than=' + str(size_exact),
+            '--smaller-than=' + str(size_exact),
+            '-p', pwd_file, '-O', str(output_dir), str(src_dir),
+        ])
+
+        # Strict comparison: size == threshold is processed, not skipped.
+        assert result == {'succeeded': 1, 'failed': 0, 'skipped': 0}
+
+    def test_no_filter_processes_all(self, tmp_path):
+        """Without any size flags, behavior is unchanged."""
+        from syndecrypt.__main__ import main
+
+        src_dir = self._stage_dir(tmp_path, {'a.csenc': CSENC_V1})
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        result = main(argv=['-p', pwd_file, '-O', str(output_dir), str(src_dir)])
+        assert result == {'succeeded': 1, 'failed': 0, 'skipped': 0}
+
+    def test_filters_apply_in_zip_input(self, tmp_path):
+        from syndecrypt.__main__ import main
+
+        zip_path = tmp_path / 'archive.zip'
+        with zipfile.ZipFile(str(zip_path), 'w') as zf:
+            zf.write(CSENC_V1, 'small.csenc')
+            zf.writestr('big.bin', b'\x00' * 10_000)
+
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        result = main(argv=[
+            '--larger-than=1K', '-p', pwd_file,
+            '-O', str(output_dir), str(zip_path),
+        ])
+
+        assert result == {'succeeded': 1, 'failed': 0, 'skipped': 1}
+        assert (output_dir / 'small.csenc').exists()
+        assert not (output_dir / 'big.bin').exists()
+
+    def test_filters_apply_in_verify_mode(self, tmp_path, capsys):
+        """--verify still honors size filters — oversize files are skipped."""
+        from syndecrypt.__main__ import main
+
+        src_dir = self._stage_dir(tmp_path, {
+            'small.csenc': CSENC_V1,
+            'big.bin': b'\x00' * 10_000,
+        })
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        result = main(argv=[
+            '--verify', '--larger-than=1K', '-p', pwd_file, str(src_dir),
+        ])
+        captured = capsys.readouterr()
+
+        assert result['succeeded'] == 1
+        assert result['failed'] == 0
+        assert result['skipped'] == 1
+        assert 'Verified' in captured.out
+        assert 'skipped' in captured.out
+
+    def test_summary_includes_skipped_count(self, tmp_path, capsys):
+        from syndecrypt.__main__ import main
+
+        src_dir = self._stage_dir(tmp_path, {
+            'small.csenc': CSENC_V1,
+            'big.bin': b'\x00' * 10_000,
+        })
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        main(argv=[
+            '--larger-than=1K', '-p', pwd_file,
+            '-O', str(output_dir), str(src_dir),
+        ])
+        captured = capsys.readouterr()
+        assert '1 skipped due to size filters' in captured.out
+
+    def test_invalid_size_arg_exits_with_message(self, tmp_path):
+        """A malformed SIZE should cause a clean sys.exit, not a mid-run crash."""
+        from syndecrypt.__main__ import main
+
+        abs_input = _abs_test_path(CSENC_V1)
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(argv=['--larger-than=banana', '-p', pwd_file,
+                       '-O', str(tmp_path / 'out'), abs_input])
+        msg = str(exc_info.value)
+        assert '--larger-than' in msg
+        assert 'banana' in msg
+
+    def test_single_file_input_honors_size_filter(self, tmp_path):
+        """Size filter also works for a single-file input path."""
+        from syndecrypt.__main__ import main
+
+        oversize = tmp_path / 'big.bin'
+        oversize.write_bytes(b'\x00' * 10_000)
+        output_dir = tmp_path / 'out'
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+
+        result = main(argv=[
+            '--larger-than=1K', '-p', pwd_file,
+            '-O', str(output_dir), str(oversize),
+        ])
+        assert result == {'succeeded': 0, 'failed': 0, 'skipped': 1}
+        assert not (output_dir / 'big.bin').exists()

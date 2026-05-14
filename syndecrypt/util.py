@@ -6,6 +6,26 @@ def _binary_contents_of(file_name):
         with open(file_name, 'rb') as f: return f.read()
 
 
+_SIZE_SUFFIXES = {'K': 1024, 'M': 1024**2, 'G': 1024**3, 'T': 1024**4}
+
+def parse_size(s):
+        """Parse a size string like '1G', '500K', '1.5M', or '1024' (raw bytes)
+        into an integer byte count. Suffixes K/M/G/T are binary (powers of 1024)
+        and case-insensitive. Raises ValueError on malformed or negative input.
+        """
+        if s is None or s == '':
+                raise ValueError('size must be non-empty')
+        s = s.strip()
+        suffix = s[-1].upper()
+        if suffix in _SIZE_SUFFIXES:
+                n = float(s[:-1]) * _SIZE_SUFFIXES[suffix]
+        else:
+                n = float(s)
+        if n < 0:
+                raise ValueError('size must be non-negative')
+        return int(n)
+
+
 # From http://code.activestate.com/recipes/410692/
 # "Readable switch construction without lambdas or dictionaries"
 

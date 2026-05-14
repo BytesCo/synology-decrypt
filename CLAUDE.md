@@ -22,8 +22,10 @@ uv run pytest tests/test_decrypt.py::test_decrypt_single_line_stream_with_passwo
 uv run coverage run -m pytest
 
 # Run the CLI tool
-uv run python -m syndecrypt [-p <password-file> | -k <private.pem>] [-a] [--verify] -O <output-dir> <encrypted-file>...
-#   -a / --archive   Preserve source mode/mtime/atime/uid/gid (rsync-style) on decrypted output
+uv run python -m syndecrypt [-p <password-file> | -k <private.pem>] [-a] [--verify] \
+              [--larger-than=<size>] [--smaller-than=<size>] -O <output-dir> <encrypted-file>...
+#   -a / --archive                Preserve source mode/mtime/atime/uid/gid (rsync-style) on decrypted output
+#   --larger-than / --smaller-than Skip input files outside a size window (strict >/<); SIZE accepts K/M/G/T (binary)
 ```
 
 ## Runtime Dependency

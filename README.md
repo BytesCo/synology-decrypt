@@ -55,6 +55,43 @@ For zip-file input, only `mode` (when the archive was produced on Unix) and `mti
 
 `--archive` is a no-op when combined with `--verify` (no output file is produced).
 
+## Filtering by size (`--larger-than` / `--smaller-than`)
+
+Two optional flags let you skip files that fall outside a size window — useful on low-RAM hardware (e.g., a Synology NAS) where you'd rather not pull multi-GB files through LZ4 decompression, or when you only want to process the small (or large) files in a batch.
+
+* `--larger-than=SIZE` — skip any input file whose size is **strictly greater than** `SIZE`.
+* `--smaller-than=SIZE` — skip any input file whose size is **strictly less than** `SIZE`.
+
+Either may be used alone, or both together to define an inclusive range. The comparison is strict, so a file whose size exactly equals the threshold is **not** skipped.
+
+`SIZE` accepts a plain byte count or a binary-prefix suffix (case-insensitive):
+
+| Example | Bytes |
+|---------|-------|
+| `1024`  | 1024  |
+| `1K`    | 1024  |
+| `1.5K`  | 1536  |
+| `1M`    | 1 048 576 |
+| `1G`    | 1 073 741 824 |
+| `1T`    | 1 099 511 627 776 |
+
+**Important:** the comparison is against the **encrypted (on-disk) size** — the `.csenc` file size, or the uncompressed entry size when reading from a zip. csenc files are LZ4-compressed, so the decrypted output is usually larger than what the filter sees. If you need to gate by decrypted size, decrypt without a filter and post-process.
+
+Size filters apply in `--verify` mode too — oversize files are skipped before any decompression work runs.
+
+Example:
+
+```
+# Skip anything bigger than 100 MB or smaller than 1 KB
+python -m syndecrypt -p password.txt --larger-than=100M --smaller-than=1K -O out/ encrypted/
+```
+
+The summary at the end of the run lists how many files were skipped due to size filters:
+
+```
+Decrypted 12 file(s): all succeeded. (4 skipped due to size filters.)
+```
+
 # Feedback
 
 Feel very free to create a GitHub issue, create a pull request, or drop me a
@@ -149,6 +186,7 @@ The current code is still basic and does not provide enough explanation yet.  I'
 ## 2026-05-14
 
 * **`-a` / `--archive` option**: Optionally preserve source filesystem metadata (mode, mtime, atime, and uid/gid when permitted) on decrypted output, similar to `rsync -a`. See "Preserving metadata" above.
+* **`--larger-than` / `--smaller-than` options**: Optionally skip input files outside a size window, evaluated against the encrypted on-disk size before any decompression work. SIZE accepts K/M/G/T binary suffixes. The run summary now reports a "skipped" count alongside succeeded/failed. See "Filtering by size" above.
 
 ## 2026-04-12
 
