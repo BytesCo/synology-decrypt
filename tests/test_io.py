@@ -538,6 +538,108 @@ class TestDecryptStreamToFile:
 
 
 # ---------------------------------------------------------------------------
+# Outstream write failures (e.g., flaky SMB target) must surface from the
+# background lz4 reader thread so the batch loop counts the file as failed
+# instead of hanging or silently renaming a half-written .partial.
+# ---------------------------------------------------------------------------
+
+class _RaisingOutstream:
+    """File-like that records bytes until raise_after, then raises EINVAL.
+
+    Implements the context-manager protocol so it can stand in for a value
+    returned from a patched builtins.open inside a `with` statement.
+    """
+
+    def __init__(self, raise_after=0):
+        self._written = 0
+        self._raise_after = raise_after
+
+    def write(self, b):
+        if self._written >= self._raise_after:
+            import errno
+            raise OSError(errno.EINVAL, 'Invalid argument')
+        self._written += len(b)
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+
+class TestOutstreamFailurePropagation:
+
+    def test_decrypt_stream_propagates_outstream_write_error(self):
+        """An OSError from outstream.write must surface from decrypt_stream."""
+        with open(CSENC_V1, 'rb') as instream:
+            with pytest.raises(OSError) as excinfo:
+                core.decrypt_stream(instream, _RaisingOutstream(),
+                                    password=PASSWORD)
+        import errno
+        assert excinfo.value.errno == errno.EINVAL
+
+    def test_decrypt_stream_propagates_outstream_failure_multichunk(self):
+        """Same propagation must hold for multi-chunk files; subprocess must
+        not deadlock on a full stdout pipe after the handler fails."""
+        multi_chunk = 'tests/testfiles-v3/csenc/5000words-3.1.txt'
+        with open(multi_chunk, 'rb') as instream:
+            with pytest.raises(OSError):
+                core.decrypt_stream(instream, _RaisingOutstream(),
+                                    password=PASSWORD)
+
+    def test_decrypt_file_cleans_partial_on_outstream_failure(self, tmp_path, monkeypatch):
+        """When the real outstream raises mid-write, the .partial must be
+        removed and the final output must not exist."""
+        out_path = str(tmp_path / 'broken.txt')
+        partial_path = out_path + '.partial'
+        real_open = open
+
+        def fake_open(path, mode='r', *args, **kwargs):
+            if path == partial_path and 'w' in mode:
+                return _RaisingOutstream()
+            return real_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr('builtins.open', fake_open)
+
+        with pytest.raises(OSError):
+            files.decrypt_file(CSENC_V1, out_path, password=PASSWORD)
+
+        assert not os.path.exists(out_path)
+        assert not os.path.exists(partial_path)
+
+    def test_batch_continues_after_outstream_failure(self, tmp_path, capsys, monkeypatch):
+        """A write failure on one file must be counted as failed, not abort the batch."""
+        from syndecrypt.__main__ import main
+
+        input_dir = tmp_path / 'enc'
+        input_dir.mkdir()
+        shutil.copy(CSENC_V1, str(input_dir / 'doomed.txt'))
+        shutil.copy(CSENC_V3, str(input_dir / 'fine.txt'))
+
+        output_dir = tmp_path / 'out'
+        doomed_partial = str(output_dir / 'enc' / 'doomed.txt.partial')
+        real_open = open
+
+        def fake_open(path, mode='r', *args, **kwargs):
+            if path == doomed_partial and 'w' in mode:
+                return _RaisingOutstream()
+            return real_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr('builtins.open', fake_open)
+
+        pwd_file = _abs_test_path('tests/testfiles-secrets/password.txt')
+        result = main(argv=['-p', pwd_file, '-O', str(output_dir), str(input_dir)])
+
+        assert result == {'succeeded': 1, 'failed': 1, 'skipped': 0}
+        assert (output_dir / 'enc' / 'fine.txt').exists()
+        assert not (output_dir / 'enc' / 'doomed.txt').exists()
+        assert not (output_dir / 'enc' / 'doomed.txt.partial').exists()
+
+
+# ---------------------------------------------------------------------------
 # Summary output: success/failed counts
 # ---------------------------------------------------------------------------
 

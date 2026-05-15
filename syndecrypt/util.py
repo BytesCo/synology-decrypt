@@ -69,6 +69,7 @@ class FilterSubprocess:
         def __init__(self, command_line, stdout_handler):
                 self.stdout_handler = stdout_handler
                 self.proc = Popen(args=command_line, stdin=PIPE, stdout=PIPE)
+                self.handler_exception = None
                 self.stdout_handler_thread = threading.Thread(target=self.stdout_handler_loop)
                 self.stdout_handler_thread.start()
 
@@ -82,7 +83,14 @@ class FilterSubprocess:
                 while True:
                         c = self.proc.stdout.read(1024)
                         if len(c) == 0: break
-                        self.stdout_handler(c)
+                        if self.handler_exception is not None:
+                                # Already failed; keep draining so the subprocess can exit
+                                # rather than blocking on a full stdout pipe buffer.
+                                continue
+                        try:
+                                self.stdout_handler(c)
+                        except Exception as e:
+                                self.handler_exception = e
 
         def write(self, b):
                 self.proc.stdin.write(b)
@@ -90,6 +98,8 @@ class FilterSubprocess:
         def close(self):
                 self.proc.stdin.close()
                 self.stdout_handler_thread.join()
+                if self.handler_exception is not None:
+                        raise self.handler_exception
 
 
 class Lz4Decompressor(FilterSubprocess):
