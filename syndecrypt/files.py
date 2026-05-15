@@ -18,16 +18,18 @@ def decrypt_stream_to_file(instream, output_file_name, password=None, private_ke
                 )
                 return
         LOGGER.info('decrypting to "%s"', output_file_name)
+        partial_path = output_file_name + '.partial'
         try:
                 outdir = os.path.dirname(output_file_name)
                 if outdir and not os.path.isdir(outdir):
                         os.makedirs(outdir)
-                with open(output_file_name, 'wb') as outstream:
+                with open(partial_path, 'wb') as outstream:
                         core.decrypt_stream(instream, outstream, password=password, private_key=private_key)
+                os.rename(partial_path, output_file_name)
         except:
                 LOGGER.error('decryption failed, exception occurred: %s: %s', sys.exc_info()[0], sys.exc_info()[1])
-                if os.path.exists(output_file_name):
-                        os.remove(output_file_name)
+                if os.path.exists(partial_path):
+                        os.remove(partial_path)
                 raise
 
 
@@ -43,16 +45,18 @@ def decrypt_file(input_file_name, output_file_name, password=None, private_key=N
                 )
                 return
         LOGGER.info('decrypting "%s" to "%s"', input_file_name, output_file_name)
+        partial_path = output_file_name + '.partial'
         try:
                 with open(input_file_name, 'rb') as instream:
                         if not os.path.isdir(os.path.dirname(output_file_name)):
                                 os.makedirs(os.path.dirname(output_file_name))
-                        with open(output_file_name, 'wb') as outstream:
+                        with open(partial_path, 'wb') as outstream:
                                 core.decrypt_stream(instream, outstream, password=password, private_key=private_key)
+                os.rename(partial_path, output_file_name)
         except:
                 LOGGER.error('decryption failed, exception occurred: %s: %s', sys.exc_info()[0], sys.exc_info()[1])
-                if os.path.exists(output_file_name):
-                        os.remove(output_file_name)
+                if os.path.exists(partial_path):
+                        os.remove(partial_path)
                 raise
 
 

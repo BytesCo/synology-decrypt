@@ -95,6 +95,12 @@ The summary at the end of the run lists how many files were excluded:
 Decrypted 12 file(s): all succeeded. (4 excluded by --skip-larger-than/--skip-smaller-than.)
 ```
 
+## Atomic output (`.partial` rename)
+
+Decrypted output is first written to `<name>.partial` in the destination directory, then renamed to `<name>` only after the decrypt completes. If the process is killed mid-stream (SIGKILL, OOM-kill, power loss), you are left with a clearly-labeled `<name>.partial` rather than a truncated file under the final name. The "already exists" guard only checks the final name, so a stale `.partial` from a previous failed run is silently overwritten on the next attempt.
+
+The rename is atomic only when source and destination are on the same filesystem, which is guaranteed here since both paths sit in the same output directory.
+
 # Feedback
 
 Feel very free to create a GitHub issue, create a pull request, or drop me a
@@ -185,6 +191,10 @@ The current code is still basic and does not provide enough explanation yet.  I'
 * Add encryption option/algorithm.
 
 # Changelog
+
+## 2026-05-15
+
+* **Atomic output writes**: decrypted output is now staged as `<name>.partial` and renamed on success, so abrupt termination (SIGKILL, OOM-kill, power loss) no longer leaves a truncated file under the final name. See "Atomic output" above.
 
 ## 2026-05-14
 
